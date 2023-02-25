@@ -1,0 +1,208 @@
+---
+title: "Bellabeat Case Study"
+author: "Jalen Canty"
+output:
+  github_document:
+    toc: yes
+---
+
+## Introduction
+
+Urška Sršen and Sando Mur founded Bellabeat, a high-tech company that manufactures health-focused smart products. Sršen used her background as an artist to develop beautifully designed technology that informs and inspires women around the world. Collecting data on activity, sleep, stress, and reproductive health has allowed Bellabeat to empower women with knowledge about their own health and habits. Since it was founded in 2013, Bellabeat has grown rapidly and quickly positioned itself as a tech-driven wellness company for women.
+
+## Business Objective
+
+Analyze smart device usage data in order to gain insight into how consumers use non-Bellabeat smart-devices. Then, using this information, provide high-level recommendations for how these trends can guide the Bellabeat marketing strategy.
+
+## Analysis
+
+We'll be using RStudio as our tool for analysis and data from [**FitBit Fitness Tracker Data**](https://www.kaggle.com/datasets/arashnic/fitbit) (CC0: Public Domain, dataset made available through [Mobius](https://www.kaggle.com/arashnic)) This Kaggle data set contains personal fitness tracker from thirty Fitbit users. Thirty eligible Fitbit users consented to the submission of personal tracker data, including minute-level output for physical activity, heart rate, and sleep monitoring. It includes information about daily activity, steps, and heart rate that can be used to explore users’ habits.
+
+```{r include=FALSE, results=FALSE}
+options(repos = list(CRAN="http://cran.rstudio.com"))
+```
+
+**Packages used for this project**:
+
+* here
+* skimr
+* janitor
+* dplyr
+* lubridate
+* tidyr
+* ggplot2
+* readr
+ 
+```{r include=FALSE, results="hide"}
+install.packages("here")
+library("here")
+install.packages("skimr")
+library("skimr")
+install.packages("janitor")
+library("janitor")
+install.packages("dplyr")
+library("dplyr")
+install.packages("lubridate")
+library("lubridate")
+install.packages("tidyr")
+library("tidyr")
+install.packages("ggplot2", repos = "http://cran.us.r-project.org")
+library("ggplot2")
+install.packages("readr")
+library("readr")
+```
+
+We'll focus on these data sets:
+
+1. dailyActivity_merged
+1. dailysteps_merged
+1. sleepday_merged
+
+Let's load & rename them.
+```{r, results=FALSE}
+activity <- read_csv("/Users/jalencanty/Documents/Projects/Coursera_Projects/Fitbit_Data/dailyActivity_merged.csv")
+steps <- read_csv("/Users/jalencanty/Documents/Projects/Coursera_Projects/Fitbit_Data/dailysteps_merged.csv")
+sleep <- read_csv("/Users/jalencanty/Documents/Projects/Coursera_Projects/Fitbit_Data/sleepDay_merged.csv")
+```
+
+
+Count of unique IDs to confirm how many individuals are represented in the data.
+```{r}
+n_unique(activity$Id)
+n_unique(sleep$Id)
+n_unique(steps$Id)
+```
+
+
+Let's check for duplicates.
+```{r}
+sum(duplicated(activity))
+sum(duplicated(sleep))
+sum(duplicated(steps))
+```
+
+
+We'll need to remove those duplicate from the sleep data before analysis.
+```{r}
+sleep <- sleep %>%
+  distinct() %>%
+  drop_na()
+```
+
+
+Let's clean column names and adjust to lowercase
+```{r}
+activity <- rename_with(activity, tolower)
+clean_names(activity)
+
+sleep <- rename_with(sleep, tolower)
+clean_names(sleep)
+
+steps <- rename_with(steps, tolower)
+clean_names(steps)
+```
+
+
+Reformatting data columns
+```{r, results=FALSE, warning = FALSE}
+activity <- activity %>%
+  rename(date = activitydate) %>%
+  mutate(date = as_date(date, format = "%m/%d/%Y"))
+
+sleep <- sleep %>% 
+  rename(date = sleepday) %>% 
+  mutate(date = as_date(date, format = "%m/%d/%Y %I:%M:%S %p", tz=Sys.timezone()))
+
+steps <- steps %>%
+  rename(date = activityday) %>%
+  mutate(date = as_date(date, format = "%m/%d/%Y"))
+```
+
+
+Merging activity and sleep data frames by Id & Date to create a new data frame named activity_sleep.
+```{r}
+activity_sleep <- merge(activity, sleep, by=c("id", "date"))
+glimpse(activity_sleep)
+```
+
+
+Let's check for a correlation between total steps and calories burned.
+```{r warning=FALSE, message = FALSE}
+ggplot(data = activity, aes(x=totalsteps, y=calories, fill = totalsteps))+
+  geom_point() + geom_smooth() + labs(title = "Total Steps vs Calories")
+```
+
+
+Here the data suggests a direct correlation between the number of steps taken and the amount of calories burned.
+
+**Let's categorize users based on activity levels and find the distribution.**
+
+
+Average daily steps, calories, and sleep by user ID
+```{r}
+daily_average <- activity_sleep %>%
+  group_by(id) %>%
+  summarise (mean_daily_steps = mean(totalsteps), mean_daily_calories = mean(calories), mean_daily_sleep = mean(totalminutesasleep))
+
+head(daily_average)
+```
+
+
+Let's create 4 user-types based on average daily steps.
+```{r}
+user_type <- daily_average %>%
+  mutate(user_type = case_when(
+    mean_daily_steps < 5000 ~ "sedentary",
+    mean_daily_steps >= 5000 & mean_daily_steps < 7499 ~ "lightly active", 
+    mean_daily_steps >= 7500 & mean_daily_steps < 9999 ~ "fairly active", 
+    mean_daily_steps >= 10000 ~ "very active"
+  ))
+head(user_type)
+```
+
+
+Converting user-type totals into percentages of the total number of users
+```{r}
+user_type_percent <- user_type %>%
+  group_by(user_type) %>%
+  summarise(total = n()) %>%
+  mutate(totals = sum(total)) %>%
+  group_by(user_type) %>%
+  summarise(total_percent = total / totals) %>%
+  mutate(labels = scales::percent(total_percent))
+
+user_type_percent$user_type <- factor(user_type_percent$user_type , levels = c("very active", "fairly active", "lightly active", "sedentary"))
+
+head(user_type_percent)
+```
+
+
+Creating a pie-chart to show user-type distribution
+```{r}
+user_type_percent %>%
+  ggplot(aes(x="",y=total_percent, fill=user_type)) +
+  geom_bar(stat = "identity", width = 1)+
+  coord_polar("y", start=0)+
+  theme_minimal()+
+  theme(axis.title.x= element_blank(),
+        axis.title.y = element_blank(),
+        panel.border = element_blank(), 
+        panel.grid = element_blank(), 
+        axis.ticks = element_blank(),
+        axis.text.x = element_blank(),
+        plot.title = element_text(hjust = 0.5, size=14, face = "bold")) +
+  scale_fill_manual(values = c("lightgreen","yellow", "lightblue","orange")) +
+  geom_text(aes(label = labels),
+            position = position_stack(vjust = 0.5))+
+  labs(title="User-Type Distribution")
+```
+
+## Conclusion
+
+In the visualization titled **"Total Steps vs Calories"** the data shows a direct correlation between the amount of steps walked and calories burned. This will be important for our recommendations. Additionally, based on the pie-chart titled **"User-Type Distribution"**, the data tells us that only 21% of users are considered to be "Very active". This lets us know the our area of opportunity with the other 79% of people who could improve their daily step goals.
+
+## Recommendation
+Bellabeat should look into creating a program that gives users an incentive to reach their daily step goal, perhaps a badge or award within the app. As a result we can assume users will respond by being more active and as a result, they'll burn more calories.
+
+
+***Thank You***
